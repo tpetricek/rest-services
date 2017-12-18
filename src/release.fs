@@ -11,8 +11,7 @@ open System
 
 /// List of available servers - corresponds to folders
 let servers = 
-  [ "enigma", Enigma.app 
-    "eurostat", Eurostat.app ] |> dict
+  [ "datadiff", Datadiff.app ] |> dict
   
 /// Drop the <s> part from http://localhost:123/<s>/something
 let dropPrefix part ctx = 
@@ -48,7 +47,6 @@ let serverConfig =
 
   { Web.defaultConfig with
       homeFolder = Some __SOURCE_DIRECTORY__
-      logger = Logging.Loggers.saneDefaultsFor Logging.LogLevel.Info
-      bindings = [ HttpBinding.mkSimple HTTP "127.0.0.1" port ] }
+      bindings = [ HttpBinding.createSimple HTTP "127.0.0.1" port ] }
 
 Web.startWebServer serverConfig app

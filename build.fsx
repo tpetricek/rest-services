@@ -49,7 +49,7 @@ Target "start" (fun _ ->
   while not started do
     try
       use wc = new System.Net.WebClient()
-      started <- wc.DownloadString("http://localhost:10033/").Contains("running")
+      started <- wc.DownloadString("http://localhost:10037/").Contains("running")
     with _ ->
       System.Threading.Thread.Sleep(1000)
       printfn "Waiting for servers to start...."

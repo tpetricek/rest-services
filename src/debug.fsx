@@ -56,8 +56,7 @@ let reloadScript serverFsx =
 let getLocalServerConfig port =
   { defaultConfig with
       homeFolder = Some __SOURCE_DIRECTORY__
-      logger = Logging.Loggers.saneDefaultsFor Logging.LogLevel.Debug
-      bindings = [ HttpBinding.mkSimple HTTP  "127.0.0.1" port ] }
+      bindings = [ HttpBinding.createSimple HTTP  "127.0.0.1" port ] }
 
 let servers = System.Collections.Generic.Dictionary<string, WebPart>()
 
@@ -93,7 +92,7 @@ let app =
     Filters.pathScan "/%s/%s" (fst >> handlePage)  
     Filters.pathScan "/%s" handlePage ]
 
-let port = 10033
+let port = 10037
 let _, server = startWebServerAsync (getLocalServerConfig port) app
 
 // Start Suave to host it on localhost

@@ -3,6 +3,7 @@ source https://www.nuget.org/api/v2
 
 nuget FAKE
 nuget FSharp.Data.SqlClient
+nuget R.NET.FSharp
 nuget Suave
 nuget FSharp.Data
 nuget Newtonsoft.Json

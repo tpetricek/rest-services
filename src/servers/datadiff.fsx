@@ -44,10 +44,11 @@ let worker = System.Threading.Thread(fun () ->
   rengine.Evaluate(".libPaths( c( .libPaths(), \"C:\\\\Users\\\\tomas\\\\Documents\\\\R\\\\win-library\\\\3.4\") )") |> ignore
   rengine.Evaluate("print(.libPaths())") |> ignore
 
-  logf "Calculating data diff of broadband dataset"
+  //logf "Calculating data diff of broadband dataset"
   rengine.Evaluate("library(datadiff)") |> ignore
-  rengine.Evaluate("ddf <- ddiff(broadband2014, broadband2015)") |> ignore
-  logf "Broadband diff completed"
+  //rengine.Evaluate("""broadband2014sm <- broadband2014[,c("Urban.rural","Download.speed..Mbit.s..24.hrs","Upload.speed..Mbit.s.24.hour","DNS.resolution..ms.24.hour","Latency..ms.24.hour","Web.page..ms.24.hour")]""") |> ignore
+  //rengine.Evaluate("ddf <- ddiff(broadband2015,broadband2014sm)") |> ignore
+  //logf "Broadband diff completed"
 
   while true do 
     let op = queue.Take() 
@@ -61,6 +62,38 @@ let withREngine op =
        match res with Choice1Of2 res -> cont res | Choice2Of2 e -> econt e    
     )
   )
+
+let getConvertor (rengine:REngine) = function 
+  | JsonValue.Boolean _ -> fun data -> 
+      data |> Seq.map (function JsonValue.Boolean b -> b | _ -> failwith "Expected boolean") |> rengine.CreateLogicalVector :> SymbolicExpression
+  | JsonValue.Number _ -> fun data -> 
+      data |> Seq.map (function JsonValue.Number n -> float n | JsonValue.Float n -> n | _ -> failwith "Expected number") |> rengine.CreateNumericVector :> _ 
+  | JsonValue.Float _ -> fun data -> 
+      data |> Seq.map (function JsonValue.Number n -> float n | JsonValue.Float n -> n | _ -> failwith "Expected number") |> rengine.CreateNumericVector :> _ 
+  | JsonValue.String _ -> fun data -> 
+      data |> Seq.map (function JsonValue.String s -> s | _ -> failwith "Expected tring") |> rengine.CreateCharacterVector :> _ 
+  | _ -> failwith "Unexpected json value"
+
+let createRDataFrame (rengine:REngine) data = 
+  let tmpEnv = rengine.Evaluate("new.env()").AsEnvironment()
+  rengine.SetSymbol("tmpEnv", tmpEnv)
+  let props = 
+    match Array.head data with 
+    | JsonValue.Record props -> props |> Array.map (fun (k, v) -> 
+        k, getConvertor rengine v )
+    | _ -> failwith "Expected record"
+  let cols = props |> Seq.map (fun (p, _) -> p, ResizeArray<_>()) |> dict
+  for row in data do
+    match row with 
+    | JsonValue.Record recd -> for k, v in recd do cols.[k].Add(v)
+    | _ -> failwith "Expected record"
+  props |> Seq.iteri (fun i (n, conv) ->
+    rengine.SetSymbol("tmp" + string i, conv cols.[n], tmpEnv))  
+  let assigns = props |> Seq.mapi (fun i (n, _) -> sprintf "'%s'=tmpEnv$tmp%d" n i)
+  rengine.Evaluate(sprintf "tmpEnv$df <- data.frame(%s)" (String.concat "," assigns)) |> ignore
+  rengine.Evaluate(sprintf "colnames(tmpEnv$df) <- c(%s)" (String.concat "," [ for n, _ in props -> "\"" + n + "\"" ])) |> ignore
+  "tmpEnv$df"
+
 // ------------------------------------------------------------------------------------------------
 // Config and data loading helpers
 // ------------------------------------------------------------------------------------------------
@@ -85,22 +118,27 @@ type Patch =
   | Insert of int * string (* * dataframe *)
   | Shift of int * float
   | Scale of int * float
+  | Delete of int
+  | Break // ????
 
-let parsePatch = withREngine (fun rengine ->
+let parsePatch (rengine:REngine) =
   let call (f, args) = 
     for i, e in Seq.indexed args do rengine.SetSymbol(sprintf "tmp%d" i, e)
     rengine.Evaluate(sprintf "%s(%s)" f (String.concat "," [ for i, _ in Seq.indexed args -> sprintf "tmp%d" i]))
   
   rengine.Evaluate("dd <- decompose_patch(ddf)") |> ignore
 
-  rengine.Evaluate("names(broadband2014)").AsCharacter() |> List.ofSeq,
   [ for i in 1 .. rengine.Evaluate("dd").AsList().Length ->
       let typ = rengine.Evaluate(sprintf "patch_type(dd[[%d]])" i).AsCharacter() |> Seq.head
       let parnames = rengine.Evaluate(sprintf "names(get_patch_params(dd[[%d]]))" i).AsCharacter() |> List.ofSeq
       let getpar name = rengine.Evaluate(sprintf "get_patch_params(dd[[%d]])$%s" i name)
       match typ with
+      | "break" -> Break // ???
       | "permute" -> 
           Permute(List.ofSeq(getpar("perm").AsInteger()))
+      | "delete" -> 
+          let col = getpar("cols").AsInteger() |> Seq.head
+          Delete(col)
       | "recode" -> 
           let col = getpar("cols").AsInteger() |> Seq.head
           let origc = call("names", [getpar("encoding")]).AsCharacter() |> List.ofSeq
@@ -118,29 +156,132 @@ let parsePatch = withREngine (fun rengine ->
           let col = getpar("cols").AsInteger() |> Seq.head
           let by = getpar("scale_factor").AsNumeric() |> Seq.head
           Scale(col, by)
-      | t -> failwithf "Unexpected patch type %s" t ])
+      | t -> failwithf "Unexpected patch (%d) type %s" i t ]
+(*
+let sample = "http://localhost:7102/434925e5/it"
+let data = "http://localhost:7102/699b2df0/it"
+*)
+let dataDiffAgent = MailboxProcessor.Start(fun inbox -> async {
+  let cache = System.Collections.Generic.Dictionary<_, _>() 
+  while true do 
+    try
+      let! sample, data, (repl:AsyncReplyChannel<_>) = inbox.Receive() 
+      logf "datadiff(sample=%s, data=%s)" sample data
+      let key = sample + data
+      if not (cache.ContainsKey(key)) then
+        logf "downloading data and running ddiff"
+        let! sampleStr = Http.AsyncRequestString(sample)
+        let! dataStr = Http.AsyncRequestString(data)
+        let sample = JsonValue.Parse(sampleStr)
+        let data = JsonValue.Parse(dataStr)
+        let getCols (js:JsonValue) = js.AsArray().[0].Properties() |> Array.map fst
+        let! patches = withREngine (fun rengine ->
+          rengine.Evaluate(sprintf "smpl <- %s" (createRDataFrame rengine (sample.AsArray()))) |> ignore
+          rengine.Evaluate(sprintf "data <- %s" (createRDataFrame rengine (data.AsArray()))) |> ignore
+          rengine.Evaluate("ddf <- ddiff(data, smpl, patch_generators=list(gen_patch_affine,gen_patch_insert))") |> ignore
+          parsePatch rengine )
+        cache.Add(key, (getCols sample, getCols data, patches, data))
+      else logf "using cached value"
+      repl.Reply(cache.[key])
+    with e ->
+      printfn "Agent failed: %A" e })  
+
+let dataDiff sample data = dataDiffAgent.PostAndAsyncReply(fun repl -> sample, data, repl)
+
+let xcookie f ctx = async {
+  match ctx.request.headers |> Seq.tryFind (fun (h, _) -> h.ToLower() = "x-cookie") with
+  | Some(_, v) -> 
+      let cks = v.Split([|"&"|], StringSplitOptions.RemoveEmptyEntries) |> Array.map (fun k -> 
+        match k.Split('=') with [|k;v|] -> k, System.Web.HttpUtility.UrlDecode v | _ -> failwith "Wrong cookie!") |> dict
+      return! f cks ctx
+  | _ -> return None }
 
 let app = 
   choose [
-    (fun ctx -> async {
-      let filter = ctx.request.url.LocalPath.Split([|'/'|], System.StringSplitOptions.RemoveEmptyEntries) |> Array.map int |> set
-      let! cols, patches = parsePatch
+    path "/" >=> returnMembers [
+      let pars = 
+        [ Parameter("data", Type.Named("frame"), false, ParameterKind.Static("data"))
+          Parameter("sample", Type.Named("frame"), false, ParameterKind.Static("sample")) ]
+      yield Member("adapt", Some pars, Result.Nested("/ddiff"), [], [])
+    ]
+    
+    path "/ddiff" >=> xcookie (fun ck ->
+      let sample = ck.["sample"].Replace('/','_') |> System.Web.HttpUtility.UrlEncode
+      let data = ck.["data"].Replace('/','_') |> System.Web.HttpUtility.UrlEncode
+      returnMembers [
+        Member("then", None, Nested(sprintf "/adapt/%s/%s/then" sample data), [], [])
+      ]
+    )
+
+    pathScan "/data/%s/%s/then%s" (fun (sample, data, url) ctx -> async {
+      
+      // Get applied patches
+      let filter = url.Split([|'/'|], System.StringSplitOptions.RemoveEmptyEntries) |> Array.map int |> set
+      let! sampleCols, cols, allPatches, frame = dataDiff (sample.Replace('_','/')) (data.Replace('_','/'))
+      let colName i = cols.[i-1]
+      let patches = allPatches |> List.indexed |> List.filter (fst >> filter.Contains) |> List.map snd
+
+      // If we want to apply permute, it will pick columns with these names
+      let permuteColNames = allPatches |> List.fold (fun cols patch ->
+        match patch with 
+        | Delete i -> Array.filter ((<>) (colName i)) cols
+        | Permute perm -> [| for i in perm -> cols.[i-1] |]
+        | Break _ -> cols
+        | Shift _ | Scale _ -> cols
+        | _ -> failwith "TODO: Unsupported patch" ) cols
+
+      let rows = frame.AsArray() |> Array.map (fun rcd -> rcd.Properties())
+
+      // Apply all selected Deletes
+      let deleteCols = patches |> List.choose (function Delete col -> Some(colName col) | _ -> None) |> set
+      let rows = rows |> Array.map (Array.filter (fst >> deleteCols.Contains >> not)) 
+      
+      // Apply permute 
+      let hasPermute = patches |> List.exists (function Permute _ -> true | _ -> false)
+      let rows = 
+        if hasPermute then
+          let permuteColNamesSet = set permuteColNames
+          rows |> Array.map (fun row ->
+            [| for i, pc in Seq.indexed permuteColNames do
+                 let k, v = Array.find (fun (k,v) -> k = pc) row 
+                 yield sampleCols.[i], v
+               for k, v in row do
+                  if not(permuteColNamesSet.Contains(k)) then yield k, v |])
+        else rows
+
+      let json = JsonValue.Array(Array.map JsonValue.Record rows).ToString()
+      return! ctx |> Successful.OK json } )
+
+    pathScan "/adapt/%s/%s/then%s" (fun (sample, data, url) ctx -> async {
+      logf "adapt(sample=%s, data=%s, url=%s)" sample data url
+      let filter = url.Split([|'/'|], System.StringSplitOptions.RemoveEmptyEntries) |> Array.map int |> set
+      let! _, cols, patches, frame = dataDiff (sample.Replace('_','/')) (data.Replace('_','/'))
+      let sample, data = System.Web.HttpUtility.UrlEncode(sample), System.Web.HttpUtility.UrlEncode(data)
       let colName i = cols.[i-1]
       let patches = Seq.indexed patches
       return! ctx |> returnMembers [
+        let dataUrl = sprintf "/data/%s/%s/then/%s" sample data (String.concat "/" [ for i in filter -> string i])
+        let sch = [ Schema("http://schema.thegamma.net", "CompletionItem", ["hidden", JsonValue.Boolean true ]) ]
+        yield Member("preview", None, Primitive(Type.Seq(Type.Record ["Testing", Type.Named("float")]), dataUrl), [], sch)
+        yield Member("Result", None, Primitive(Type.Seq(Type.Record ["Testing", Type.Named("float")]), dataUrl), [], [])
+        
+        let filterAndDelete = Set.union filter (set [ for i, p in patches do match p with Delete _ -> yield i | _ -> () ])
+        let deleteAllUrl = sprintf "/adapt/%s/%s/then/%s" sample data (String.concat "/" [ for i in filterAndDelete -> string i])
+        yield Member("Delete all recommended columns", None, Nested(deleteAllUrl), [], [])
+
         for i, patch in patches do
           if filter.Contains(i) then () else
           let mkMember fmt = Printf.kprintf (fun s -> 
-            let url = 
-              if ctx.request.url.LocalPath = "/" then "/" + string i
-              else ctx.request.url.LocalPath + "/" + string i
+            let url = sprintf "/adapt/%s/%s/then/%s" sample data (String.concat "/" ((string i)::[ for i in filter -> string i]))
             Member(s, None, Nested(url), [], [])) fmt
           match patch with  
           | Permute _ -> yield mkMember "Permute columns"
+          | Delete(col) -> yield mkMember "Delete column %s" (colName col)
           | Recode(col, coding) -> yield mkMember "Recode column %s" (colName col)
           | Insert(col, name) -> yield mkMember "Insert column %s at %d" name col
           | Shift(col, by) -> yield mkMember "Shift column %s by %f" (colName col) by
           | Scale(col, by) -> yield mkMember "Scale column %s by %f" (colName col) by
+          | Break -> () // ???
       ]
     })
   ]

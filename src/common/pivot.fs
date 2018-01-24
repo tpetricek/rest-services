@@ -346,6 +346,7 @@ type InferredType =
   | Any | String | Int | Float
   | Bool | OneZero 
   | Date of System.Globalization.CultureInfo
+  | Empty
 
 module Inference = 
   let parseError s = raise (ParseError s)
@@ -357,7 +358,8 @@ module Inference =
   let ddmm = System.Globalization.CultureInfo.GetCultureInfo("en-gb")
   
   let inferType (s:string) =
-    if fst (Int32.TryParse(s)) then 
+    if String.IsNullOrWhiteSpace(s) then Empty 
+    elif fst (Int32.TryParse(s)) then 
       let i = Int32.Parse(s) 
       if i = 1 || i = 0 then OneZero else Int
     elif fst (Decimal.TryParse(s)) then Float
@@ -377,13 +379,16 @@ module Inference =
     | Int, OneZero | OneZero, Int -> Int
     | Float, OneZero | OneZero, Float -> Float
     | Float, Int | Int, Float -> Float
+    | Empty, Float | Float, Empty -> Float
+    | Int, Empty | Empty, Int -> Int // R allows NA integers, so this is fine
+    | OneZero, Empty | Empty, OneZero -> Int
     | _ -> String
 
   let formatType = function
-    | InferredType.Any | InferredType.String -> "string"
+    | InferredType.Empty | InferredType.Any | InferredType.String -> "string"
     | InferredType.Bool | InferredType.OneZero -> "bool"
     | InferredType.Int | InferredType.Float -> "number"
-    | InferredType.Date _ -> "date"
+    | InferredType.Date _ -> "date"    
 
 let inferTypes headers rows = 
   rows
@@ -481,7 +486,7 @@ let handleInMemoryRequest meta source query =
 // ------------------------------------------------------------------------------------------------
 // 
 // ------------------------------------------------------------------------------------------------
-
+(*
 type SqlQuerySource = 
   | Table of string
   | Nested of SqlQuery
@@ -583,9 +588,9 @@ let runQuery (exec:string -> (System.Data.SqlClient.SqlDataReader -> _) -> Resiz
     (fun row -> meta |> Array.mapi (fun i (col, typ) ->
       let isNull = row.IsDBNull(i)
       match typ with
-      | InferredType.Any | InferredType.String when isNull -> col, Value.String("")
+      | InferredType.Empty | InferredType.Any | InferredType.String when isNull -> col, Value.String("")
       | _ when isNull -> failwith "Unexpected null value"
-      | InferredType.Any | InferredType.String -> col, Value.String(row.GetString(i))
+      | InferredType.Empty | InferredType.Any | InferredType.String -> col, Value.String(row.GetString(i))
       | InferredType.Bool | InferredType.OneZero -> col, Value.Bool(row.GetBoolean(i))
       | InferredType.Date _ -> col, Value.Date(row.GetDateTimeOffset(i))
       | InferredType.Int -> col, Value.Number(float(row.GetInt32(i)))
@@ -627,3 +632,4 @@ let handleSqlRequest exec table meta query =
   //let json = applyAction isPreview meta res query.Action
   *)
   Successful.OK (json.ToString())  
+  *)

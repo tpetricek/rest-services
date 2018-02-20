@@ -298,26 +298,26 @@ let app =
 
       let! _, cols, patches, frame = dataDiff (sample.Replace('_','/')) (data.Replace('_','/'))
       let patches = Seq.indexed patches
-      let filter = url.Split([|'/'|], System.StringSplitOptions.RemoveEmptyEntries) |> Array.map int |> set
-      let filter = 
-        if not (filter.Contains -1) then filter else
-        Set.union filter (set [ for i, p in patches do match p with Delete _ -> yield i | _ -> () ])
+      let filterEnter = url.Split([|'/'|], System.StringSplitOptions.RemoveEmptyEntries) |> Array.map int |> set
+      let filterAll = 
+        if not (filterEnter.Contains -1) then filterEnter else
+        Set.union filterEnter (set [ for i, p in patches do match p with Delete _ -> yield i | _ -> () ])
 
       let sample, data = System.Web.HttpUtility.UrlEncode(sample), System.Web.HttpUtility.UrlEncode(data)
       let colName i = cols.[i-1]
       return! ctx |> returnMembers [
-        let dataUrl = sprintf "/data/%s/%s/then/%s" sample data (String.concat "/" [ for i in filter -> string i])
+        let dataUrl = sprintf "/data/%s/%s/then/%s" sample data (String.concat "/" [ for i in filterEnter -> string i])
         let sch = [ Schema("http://schema.thegamma.net", "CompletionItem", ["hidden", JsonValue.Boolean true ]) ]
         yield Member("preview", None, Primitive(Type.Seq(Type.Record ["Testing", Type.Named("float")]), dataUrl), [], sch)
         yield Member("Result", None, Primitive(Type.Seq(Type.Record ["Testing", Type.Named("float")]), dataUrl), [], [])
         
-        let deleteAllUrl = sprintf "/adapt/%s/%s/then/-1/%s" sample data (String.concat "/" [ for i in filter -> string i])
+        let deleteAllUrl = sprintf "/adapt/%s/%s/then/-1/%s" sample data (String.concat "/" [ for i in filterEnter -> string i])
         yield Member("Delete all recommended columns", None, Nested(deleteAllUrl), [], [])
 
         for i, patch in patches do
-          if filter.Contains(i) then () else
+          if filterAll.Contains(i) then () else
           let mkMember fmt = Printf.kprintf (fun s -> 
-            let url = sprintf "/adapt/%s/%s/then/%s" sample data (String.concat "/" ((string i)::[ for i in filter -> string i]))
+            let url = sprintf "/adapt/%s/%s/then/%s" sample data (String.concat "/" ((string i)::[ for i in filterEnter -> string i]))
             Member(s, None, Nested(url), [], [])) fmt
           match patch with  
           | Permute _ -> yield mkMember "Permute columns"

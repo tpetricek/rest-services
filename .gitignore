@@ -18,3 +18,4 @@ cache
 config.txt
 src/common/config.fs
 Paket.Restore.targets
+rinstall

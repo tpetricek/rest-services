@@ -37,17 +37,22 @@ let queue = new System.Collections.Concurrent.BlockingCollection<_>()
 let worker = System.Threading.Thread(fun () -> 
   
   logf "Starting R instance"
-  //let rpath = __SOURCE_DIRECTORY__ + "/../rinstall/R-3.4.1" |> IO.Path.GetFullPath
-  let rpath = @"C:\Programs\Academic\R\R-3.4.2"
+  let rpath = __SOURCE_DIRECTORY__ + "/../../rinstall/R-3.4.1" |> IO.Path.GetFullPath
+  let pkgpath = __SOURCE_DIRECTORY__ + "/../rinstall/libraries" |> IO.Path.GetFullPath
+  //let rpath = @"C:\Programs\Academic\R\R-3.4.2"
   let path = System.Environment.GetEnvironmentVariable("PATH")
   System.Environment.SetEnvironmentVariable("PATH", sprintf "%s;%s/bin/x64" path rpath)
   System.Environment.SetEnvironmentVariable("R_HOME", rpath)
   let rengine = REngine.GetInstance(rpath + "/bin/x64/R.dll", AutoPrint=false)
-  rengine.Evaluate(".libPaths( c( .libPaths(), \"C:\\\\Users\\\\tomas\\\\Documents\\\\R\\\\win-library\\\\3.4\") )") |> ignore
+  rengine.Evaluate(sprintf ".libPaths( c( .libPaths(), \"%s\") )" (pkgpath.Replace("\\","\\\\"))) |> ignore
+  //rengine.Evaluate(".libPaths( c( .libPaths(), \"C:\\\\Users\\\\tomas\\\\Documents\\\\R\\\\win-library\\\\3.4\") )") |> ignore
   rengine.Evaluate("print(.libPaths())") |> ignore
 
-  //logf "Calculating data diff of broadband dataset"
-  rengine.Evaluate("library(datadiff)") |> ignore
+  logf "Loading datadiff"
+  try
+    rengine.Evaluate("library(datadiff)") |> ignore
+  with e ->
+    printfn "Failed loading datadiff: %A" e
   //rengine.Evaluate("""broadband2014sm <- broadband2014[,c("Urban.rural","Download.speed..Mbit.s..24.hrs","Upload.speed..Mbit.s.24.hour","DNS.resolution..ms.24.hour","Latency..ms.24.hour","Web.page..ms.24.hour")]""") |> ignore
   //rengine.Evaluate("ddf <- ddiff(broadband2015,broadband2014sm)") |> ignore
   //logf "Broadband diff completed"

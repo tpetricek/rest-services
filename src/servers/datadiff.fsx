@@ -38,7 +38,7 @@ let worker = System.Threading.Thread(fun () ->
   
   logf "Starting R instance"
   let rpath = __SOURCE_DIRECTORY__ + "/../../rinstall/R-3.4.1" |> IO.Path.GetFullPath
-  let pkgpath = __SOURCE_DIRECTORY__ + "/../rinstall/libraries" |> IO.Path.GetFullPath
+  let pkgpath = __SOURCE_DIRECTORY__ + "/../../rinstall/libraries" |> IO.Path.GetFullPath
   //let rpath = @"C:\Programs\Academic\R\R-3.4.2"
   let path = System.Environment.GetEnvironmentVariable("PATH")
   System.Environment.SetEnvironmentVariable("PATH", sprintf "%s;%s/bin/x64" path rpath)

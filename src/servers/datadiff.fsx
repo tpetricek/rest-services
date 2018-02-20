@@ -257,7 +257,10 @@ let app =
       let filter = url.Split([|'/'|], System.StringSplitOptions.RemoveEmptyEntries) |> Array.map int |> set
       let! sampleCols, cols, allPatches, frame = dataDiff (sample.Replace('_','/')) (data.Replace('_','/'))
       let colName i = cols.[i-1]
-      let patches = allPatches |> List.indexed |> List.filter (fst >> filter.Contains) |> List.map snd
+      let patches = allPatches |> List.indexed |> List.filter (function 
+        | i, Delete _ when filter.Contains(-1) -> true
+        | i, _ when filter.Contains i -> true
+        | _ -> false) |> List.map snd
 
       // If we want to apply permute, it will pick columns with these names
       let permuteColNames = allPatches |> List.fold (fun cols patch ->
@@ -292,19 +295,23 @@ let app =
 
     pathScan "/adapt/%s/%s/then%s" (fun (sample, data, url) ctx -> async {
       logf "adapt(sample=%s, data=%s, url=%s)" sample data url
-      let filter = url.Split([|'/'|], System.StringSplitOptions.RemoveEmptyEntries) |> Array.map int |> set
+
       let! _, cols, patches, frame = dataDiff (sample.Replace('_','/')) (data.Replace('_','/'))
+      let patches = Seq.indexed patches
+      let filter = url.Split([|'/'|], System.StringSplitOptions.RemoveEmptyEntries) |> Array.map int |> set
+      let filter = 
+        if not (filter.Contains -1) then filter else
+        Set.union filter (set [ for i, p in patches do match p with Delete _ -> yield i | _ -> () ])
+
       let sample, data = System.Web.HttpUtility.UrlEncode(sample), System.Web.HttpUtility.UrlEncode(data)
       let colName i = cols.[i-1]
-      let patches = Seq.indexed patches
       return! ctx |> returnMembers [
         let dataUrl = sprintf "/data/%s/%s/then/%s" sample data (String.concat "/" [ for i in filter -> string i])
         let sch = [ Schema("http://schema.thegamma.net", "CompletionItem", ["hidden", JsonValue.Boolean true ]) ]
         yield Member("preview", None, Primitive(Type.Seq(Type.Record ["Testing", Type.Named("float")]), dataUrl), [], sch)
         yield Member("Result", None, Primitive(Type.Seq(Type.Record ["Testing", Type.Named("float")]), dataUrl), [], [])
         
-        let filterAndDelete = Set.union filter (set [ for i, p in patches do match p with Delete _ -> yield i | _ -> () ])
-        let deleteAllUrl = sprintf "/adapt/%s/%s/then/%s" sample data (String.concat "/" [ for i in filterAndDelete -> string i])
+        let deleteAllUrl = sprintf "/adapt/%s/%s/then/-1/%s" sample data (String.concat "/" [ for i in filter -> string i])
         yield Member("Delete all recommended columns", None, Nested(deleteAllUrl), [], [])
 
         for i, patch in patches do

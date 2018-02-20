@@ -44,7 +44,7 @@ let worker = System.Threading.Thread(fun () ->
   System.Environment.SetEnvironmentVariable("PATH", sprintf "%s;%s/bin/x64" path rpath)
   System.Environment.SetEnvironmentVariable("R_HOME", rpath)
   let rengine = REngine.GetInstance(rpath + "/bin/x64/R.dll", AutoPrint=false)
-  rengine.Evaluate(sprintf ".libPaths( c( .libPaths(), \"%s\") )" (pkgpath.Replace("\\","\\\\"))) |> ignore
+  rengine.Evaluate(sprintf ".libPaths( c(\"%s\") )" (pkgpath.Replace("\\","\\\\"))) |> ignore
   //rengine.Evaluate(".libPaths( c( .libPaths(), \"C:\\\\Users\\\\tomas\\\\Documents\\\\R\\\\win-library\\\\3.4\") )") |> ignore
   rengine.Evaluate("print(.libPaths())") |> ignore
 

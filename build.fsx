@@ -40,28 +40,28 @@ Target "installr" (fun _ ->
     wc.DownloadFile("https://wrattlerdata.blob.core.windows.net/install/R-3.4.1.zip", "rinstall/R-3.4.1.zip")
     Unzip "rinstall" "rinstall/R-3.4.1.zip"
 
-  printfn "Installing dependencies.."
-  let lib = __SOURCE_DIRECTORY__ </> "rinstall/libraries"
-  let packages = ["stringr";"dplyr";"purrr";"clue";"lpSolve";"progress";"logging"]
-  for package in packages do 
-    printfn "Installing package: %s" package
+    printfn "Installing dependencies.."
+    let lib = __SOURCE_DIRECTORY__ </> "rinstall/libraries"
+    let packages = ["stringr";"dplyr";"purrr";"clue";"lpSolve";"progress";"logging"]
+    for package in packages do 
+      printfn "Installing package: %s" package
+      let res = 
+        ExecProcessAndReturnMessages (fun p ->
+          p.FileName <- "rinstall/R-3.4.1/bin/R.exe"
+          p.Arguments <- sprintf "--vanilla -e install.packages('%s',lib='%s',repos='http://cran.us.r-project.org',dependencies=TRUE)" package (lib.Replace("\\","/"))
+        ) TimeSpan.MaxValue
+      for r in res.Messages do printfn ">>> %s" r
+      for r in res.Errors do printfn "!!! %s" r
+
+    printfn "Installing datadiff.."
+    let package = __SOURCE_DIRECTORY__ </> "lib/datadiff_0.1.0.tar.gz"
     let res = 
       ExecProcessAndReturnMessages (fun p ->
         p.FileName <- "rinstall/R-3.4.1/bin/R.exe"
-        p.Arguments <- sprintf "--vanilla -e install.packages('%s',lib='%s',repos='http://cran.us.r-project.org',dependencies=TRUE)" package (lib.Replace("\\","/"))
+        p.Arguments <- sprintf "--vanilla -e install.packages('%s',lib='%s',type='source',repos=NULL,dependencies=TRUE)" (package.Replace("\\","/")) (lib.Replace("\\","/"))
       ) TimeSpan.MaxValue
     for r in res.Messages do printfn ">>> %s" r
     for r in res.Errors do printfn "!!! %s" r
-
-  printfn "Installing datadiff.."
-  let package = __SOURCE_DIRECTORY__ </> "lib/datadiff_0.1.0.tar.gz"
-  let res = 
-    ExecProcessAndReturnMessages (fun p ->
-      p.FileName <- "rinstall/R-3.4.1/bin/R.exe"
-      p.Arguments <- sprintf "--vanilla -e install.packages('%s',lib='%s',type='source',repos=NULL,dependencies=TRUE)" (package.Replace("\\","/")) (lib.Replace("\\","/"))
-    ) TimeSpan.MaxValue
-  for r in res.Messages do printfn ">>> %s" r
-  for r in res.Errors do printfn "!!! %s" r
 )
 
 let newName prefix f = 
